@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Locate this skill's root (where SKILL.md lives).
+SKILL_ROOT="${WORKFLOW_REVIEW_SKILL_ROOT:-}"
+if [[ -z "$SKILL_ROOT" || ! -f "$SKILL_ROOT/SKILL.md" ]]; then
+  SKILL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+if [[ ! -f "$SKILL_ROOT/SKILL.md" ]]; then
+  # Fallback: search common skill directories.
+  SKILL_ROOT="$(find "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.codex/skills" -path "*/workflow-review/SKILL.md" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)"
+fi
+
+engine_available="no"
+if [[ -d "$SKILL_ROOT/scripts/engine" && -f "$SKILL_ROOT/scripts/engine/loader.py" ]]; then
+  engine_available="yes"
+fi
+
 claude_root="${CLAUDE_DATA_ROOT:-${CLAUDE_CONFIG_DIR:-}}"
 
 if [[ -z "$claude_root" || ! -d "$claude_root" ]]; then
@@ -55,6 +70,8 @@ fi
 report_exists="no"
 [[ -n "$report_path" ]] && report_exists="yes"
 
+printf 'SKILL_ROOT=%s\n' "$SKILL_ROOT"
+printf 'ENGINE_AVAILABLE=%s\n' "$engine_available"
 printf 'CLAUDE_ROOT=%s\n' "$claude_root"
 printf 'FACETS_DIR=%s\n' "$facets_dir"
 printf 'SESSION_META_DIR=%s\n' "$session_meta_dir"

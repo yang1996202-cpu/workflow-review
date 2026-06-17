@@ -5,7 +5,7 @@ description: |
 
   触发后默认回顾最近 30 天；如果可用历史少于 30 天，就回顾全部可用历史。第一产出物必须是候选清单，而不是直接创建资产。候选清单至少包含：重复工作流、支持证据和日期、频率/置信度、评分、推荐落点（skill / command / subagent-workflow / hook / script / external-automation / extend-existing / skip）和一句话理由。
 
-  只有用户确认候选清单后，才创建或扩展 1-2 个高置信度、范围窄、可验证的最小资产。禁止读取完整会话记录；使用本 skill 的 scripts/ 目录提取统计摘要。官方 usage-data/facets 优先；没有 facets 时默认先要求用户运行 /insights，只有用户明确确认继续降级审计后，才使用 projects / 工作区 git / 可选 legacy transcripts / 用户口述。
+  只有用户确认候选清单后，才创建或扩展 1-2 个高置信度、范围窄、可验证的最小资产。禁止读取完整会话记录；使用本 skill 的 scripts/ 目录提取统计摘要。官方 usage-data/facets 优先；没有 facets 时，优先使用本 skill 内置的 trace 引擎直接分析本地 `~/.claude/projects/**/*.jsonl`，只有用户明确选择更弱降级时才使用 projects / 工作区 git / 可选 legacy transcripts / 用户口述。
 metadata:
   short-description: 分析工作历史，发现重复模式，打包成最小有用技能
 ---
@@ -55,6 +55,12 @@ fi
 
 记录输出里的 `FACETS_DIR`、`SESSION_META_DIR`、`REPORT_PATH`、`PROJECTS_DIR`、`TRANSCRIPTS_DIR` 及各自 count。不要写死 `$HOME/.claude`。如果后续 Bash 调用不保留变量，就把命令里的 `$FACETS_DIR` 等直接替换成探测输出的实际路径。
 
+同时确认内置 trace 引擎可用：
+
+```bash
+test -d "$SKILL_ROOT/scripts/engine" && echo "engine_ok"
+```
+
 ### 2. 主流程：facets 存在
 
 当 `FACETS_COUNT > 0`：
@@ -66,7 +72,7 @@ python3 "$SKILL_ROOT/scripts/summarize-session-meta.py" "$SESSION_META_DIR" --da
 
 若 `report.html` 存在且 7 天内更新，可读取其文字段落辅助验证；忽略 `<style>` 和 `<script>`。若超过 7 天，标注已过期但可以继续使用 facets/session-meta。
 
-### 3. 无 facets：先阻断
+### 3. 无 facets：三条路径
 
 当 `FACETS_COUNT = 0`，必须先暂停并询问：
 
@@ -78,14 +84,39 @@ python3 "$SKILL_ROOT/scripts/summarize-session-meta.py" "$SESSION_META_DIR" --da
 > - report.html: {REPORT_EXISTS} ({REPORT_DATE})
 > - projects: {PROJECTS_COUNT}
 > - transcripts: {TRANSCRIPTS_COUNT}
+> - 内置 trace 引擎: 可用（基于 `~/.claude/projects/**/*.jsonl`）
 >
-> 你有两个选项：
-> a. 推荐：先在 Claude Code 里运行 `/insights`，完成后重新调用 workflow-review。
-> b. 回复“继续降级审计”，我改用 projects + 当前工作区 git + 可选 legacy transcripts，结果会更弱。
+> 你有三个选项：
+> a. 推荐：先在 Claude Code 里运行 `/insights`，完成后重新调用 workflow-review。语义评估最完整。
+> b. 本地引擎：回复“用本地引擎”，我直接分析你的原始 trace 文件，不依赖官方功能。客观执行模式强，但缺少满意度/目标等语义判断。
+> c. 弱降级：回复“继续降级审计”，我改用 projects 轻量扫描 + 当前工作区 git + 可选 legacy transcripts，结果最弱。
 
 如果用户没有明确选择，不要继续。
 
-### 4. 降级流程：用户确认后
+### 4. 本地 trace 引擎流程
+
+只有用户明确回复“用本地引擎”或等价确认后，才运行：
+
+```bash
+# 单会话钻取（可选）
+python3 "$SKILL_ROOT/scripts/analyze-traces.py" "$PROJECTS_DIR" --days 30 --limit 50
+
+# 跨会话聚合，生成重复模式候选
+python3 "$SKILL_ROOT/scripts/aggregate-patterns.py" "$PROJECTS_DIR" --days 30 --top-n 10
+```
+
+内置引擎输出包含：
+
+- 每个会话的回合数、工具数、cost、缓存重读、heavy turns
+- 高频工具（Bash / Read / Edit / MCP 等）
+- 高频文件（被反复 Read/Edit 的文件）
+- 常用 Skill / Sub-agent / MCP server
+- 真实 human prompt 的聚类（重复请求模式）
+- 按项目聚合的活跃度
+
+使用这些输出生成候选清单时，必须明确标注数据源为 `trace-engine`，不要把它包装成 insights 数据。
+
+### 5. 降级流程：用户确认后
 
 只有用户明确回复“继续降级审计”或等价确认后，才运行：
 
@@ -142,7 +173,8 @@ legacy transcripts 只在存在且用户接受弱证据时使用，且必须标�
 ## 正常工作标志
 
 - 能正确检测 Claude Code 数据目录和各数据源状态。
-- facets 存在时走主流程；facets 缺失时先要求 `/insights` 或明确降级确认。
+- facets 存在时走主流程；facets 缺失时提供三条清晰路径（`/insights` / 本地 trace 引擎 / 弱降级），不擅自替用户选择。
+- 本地 trace 引擎输出必须标注数据源为 `trace-engine`，不把弱证据包装成 insights 结论。
 - 输出候选清单时标注数据源、日期、评分、置信度和推荐落点。
 - 清单后暂停，不自动创建任何东西。
 - 降级结果明确标注证据更弱，不把弱证据包装成确定结论。
