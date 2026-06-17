@@ -63,11 +63,17 @@ def _prompt_signature(prompt: str) -> frozenset[str]:
 
 
 def _cluster_prompts(prompts: list[tuple[str, str, str]]) -> list[dict[str, Any]]:
-    """Group similar human prompts by token overlap.
+    """Group similar human prompts by normalized token overlap.
 
     prompts: list of (project, session_id, prompt_text)
     Returns clusters sorted by size.
+
+    Two prompts cluster only if their shared keywords cover at least
+    SIMILARITY_THRESHOLD of the shorter prompt's keywords. This prevents
+    long prompts from being grouped just because they share a few common
+    words (e.g. "skill", "项目").
     """
+    SIMILARITY_THRESHOLD = 0.30
     clusters: list[dict[str, Any]] = []
 
     for project, sid, prompt in prompts:
@@ -75,16 +81,20 @@ def _cluster_prompts(prompts: list[tuple[str, str, str]]) -> list[dict[str, Any]
         if not sig:
             continue
         best = None
-        best_score = 0
+        best_score = 0.0
         for c in clusters:
-            score = len(sig & c["sig"])
+            denom = min(len(sig), len(c["sig"]))
+            if denom == 0:
+                continue
+            score = len(sig & c["sig"]) / denom
             if score > best_score:
                 best = c
                 best_score = score
-        if best and best_score >= 2:
-            best["sig"] = best["sig"] | sig
+        if best and best_score >= SIMILARITY_THRESHOLD:
             best["prompts"].append((project, sid, prompt))
             best["projects"].add(project)
+            # Do NOT merge signatures: keep the cluster representative fixed
+            # to avoid a snowball effect where clusters grow indefinitely.
         else:
             clusters.append({
                 "sig": sig,
