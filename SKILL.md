@@ -3,16 +3,12 @@ name: workflow-review
 description: |
   工作流复盘与重复模式发现 Skill。当用户询问最近有哪些重复工作流、哪些事情可以打包成 skill/command/hook/script、哪些手动流程值得自动化、或想从 Claude Code 使用历史里发现模式时使用。
 
-  触发后默认回顾最近 30 天；如果可用历史少于 30 天，就回顾全部可用历史。第一产出物必须是候选清单，而不是直接创建资产。候选清单至少包含：重复工作流、支持证据和日期、频率/置信度、评分、推荐落点（skill / command / subagent-workflow / hook / script / external-automation / extend-existing / skip）和一句话理由。
-
-  只有用户确认候选清单后，才创建或扩展 1-2 个高置信度、范围窄、可验证的最小资产。禁止读取完整会话记录；使用本 skill 的 scripts/ 目录提取统计摘要。官方 usage-data/facets 优先；没有 facets 时，优先使用本 skill 内置的 trace 引擎直接分析本地 `~/.claude/projects/**/*.jsonl`，只有用户明确选择更弱降级时才使用 projects / 工作区 git / 可选 legacy transcripts / 用户口述。
+  触发后默认回顾最近 30 天；如果可用历史少于 30 天，就回顾全部可用历史。第一产出物必须是候选清单，而不是直接创建资产。只有用户确认候选清单后，才创建或扩展 1-2 个高置信度、范围窄、可验证的最小资产。
 metadata:
   short-description: 分析工作历史，发现重复模式，打包成最小有用技能
 ---
 
 # Workflow Review
-
-回答一个问题：最近哪些重复手动流程值得被打包，以及应该打包成什么形式。
 
 ## 硬性边界
 
@@ -38,14 +34,7 @@ metadata:
 
 ## 数据收集
 
-将 `SKILL_ROOT` 设为包含本 `SKILL.md` 的目录。若不确定，先在常见安装目录中定位 `workflow-review/scripts/detect-claude-data.sh`。
-
-```bash
-SKILL_ROOT="${WORKFLOW_REVIEW_SKILL_ROOT:-$HOME/.claude/skills/workflow-review}"
-if [ ! -x "$SKILL_ROOT/scripts/detect-claude-data.sh" ]; then
-  SKILL_ROOT="$(find "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.codex/skills" -path "*/workflow-review/scripts/detect-claude-data.sh" -type f 2>/dev/null | head -1 | sed 's#/scripts/detect-claude-data.sh##')"
-fi
-```
+将 `SKILL_ROOT` 设为包含本 `SKILL.md` 的目录。优先用 `$HOME/.claude/skills/workflow-review`，不存在时再 find。
 
 ### 1. 探测数据源
 
@@ -53,7 +42,7 @@ fi
 "$SKILL_ROOT/scripts/detect-claude-data.sh"
 ```
 
-记录输出里的 `FACETS_DIR`、`SESSION_META_DIR`、`REPORT_PATH`、`PROJECTS_DIR`、`TRANSCRIPTS_DIR` 及各自 count。不要写死 `$HOME/.claude`。如果后续 Bash 调用不保留变量，就把命令里的 `$FACETS_DIR` 等直接替换成探测输出的实际路径。
+记录输出里的 `FACETS_DIR`、`SESSION_META_DIR`、`REPORT_PATH`、`PROJECTS_DIR`、`TRANSCRIPTS_DIR` 及各自 count。不要写死 `$HOME/.claude`。
 
 同时确认内置 trace 引擎可用：
 
@@ -70,7 +59,7 @@ python3 "$SKILL_ROOT/scripts/summarize-facets.py" "$FACETS_DIR" --days 30
 python3 "$SKILL_ROOT/scripts/summarize-session-meta.py" "$SESSION_META_DIR" --days 30
 ```
 
-若 `report.html` 存在且 7 天内更新，可读取其文字段落辅助验证；忽略 `<style>` 和 `<script>`。若超过 7 天，标注已过期但可以继续使用 facets/session-meta。
+若 `report.html` 存在且 7 天内更新，可读取其文字段落辅助验证。若超过 7 天，标注已过期但可以继续使用 facets/session-meta。
 
 ### 3. 无 facets：三条路径
 
@@ -118,7 +107,7 @@ python3 "$SKILL_ROOT/scripts/aggregate-patterns.py" "$PROJECTS_DIR" --days 30 --
 
 ### 5. 降级流程：用户确认后
 
-只有用户明确回复“继续降级审计”或等价确认后，才运行：
+只有用户明确回复"继续降级审计"或等价确认后，才运行：
 
 ```bash
 python3 "$SKILL_ROOT/scripts/summarize-projects.py" "$PROJECTS_DIR" --days 30
@@ -169,12 +158,3 @@ legacy transcripts 只在存在且用户接受弱证据时使用，且必须标�
 2. 如果已有覆盖，优先 `extend-existing`，不要新建重复资产。
 3. 新资产必须有窄触发、窄输入、明确输出和验证方式。
 4. 创建后汇报：创建/扩展了什么、验证方式、刻意跳过了什么、哪些证据仍不足。
-
-## 正常工作标志
-
-- 能正确检测 Claude Code 数据目录和各数据源状态。
-- facets 存在时走主流程；facets 缺失时提供三条清晰路径（`/insights` / 本地 trace 引擎 / 弱降级），不擅自替用户选择。
-- 本地 trace 引擎输出必须标注数据源为 `trace-engine`，不把弱证据包装成 insights 结论。
-- 输出候选清单时标注数据源、日期、评分、置信度和推荐落点。
-- 清单后暂停，不自动创建任何东西。
-- 降级结果明确标注证据更弱，不把弱证据包装成确定结论。
